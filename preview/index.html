@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en" style="background:#0A090D">
+  <head>
+    <meta charset="utf-8">
+    <!-- Palermo Noir in the browser (the WebGL design, docs/superpowers/specs/2026-10-31-palermo-webgl-design.md, 2.2):
+         the build's own page, at vgraphics.gr/vg--palermo-play/ and its preview, framed full screen by the site's four
+         Palermo pages, which have the name, description and preview for search and sharing. Every file of the build
+         loads from this page's own folder; the site's shared pieces load from the site, the same origin. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#0A090D">
+    <!-- Out of search for good: players use the site's pages, never the build's own address. -->
+    <meta name="robots" content="noindex">
+    <title>Palermo Noir</title>
+    <link rel="icon" href="/palermo/assets/icon-32.png">
+    <!-- Palermo's cursors for mice and trackpads (its theme pack), put to use by the site's shared rules; the shared
+         squishy loading bar's look; no text selection, no right-click and the console's warning. -->
+    <link rel="stylesheet" href="/palermo/theme/theme.css" media="(hover: hover) and (pointer: fine)">
+    <link rel="stylesheet" href="/assets/cursors.css">
+    <link rel="stylesheet" href="/assets/startup/loading-bar.css">
+    <script src="/assets/no-select.js" defer></script>
+    <script src="TemplateData/palermo-page.js"></script>
+    <script>
+      // The route, before the first paint (2.2, head item 5): ?route= names the page that framed the build (play, join,
+      // tv or demo; anything else is play), never the path, which is the build's own folder. html gets route-<route>,
+      // no-intro on a join link, no-film on a TV that vgraphics.gr/tv sent, framed in a frame, and the player's language.
+      // Every route but the TV's gets VHub's SDK beside the build (body item 6).
+      window.palermoDevelopment = false;
+      if (window.PalermoPage) {
+        window.PalermoPage.mark(document.documentElement, window);
+        window.PalermoPage.hubSdk(document, window);
+      }
+    </script>
+    <style>
+      /* The game alone, with nothing to scroll and no pull-to-refresh mid-game ("When we play we play. No scroll
+         needed."), on the house's dark launch colour from the first byte. */
+      html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #0A090D; }
+      html { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+      body { color: #F3EADA; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+      ::selection { background: #C9A46E; color: #0A090D; }
+      /* The frame's own height: the window's, less the site's slim bar on /play/ and /demo/. */
+      #stage { position: fixed; left: 0; top: 0; width: 100%; height: 100vh; height: 100dvh; }
+      #unity-canvas { display: block; width: 100%; height: 100%; background: #0A090D; outline: none; touch-action: none; }
+      /* The loading screen over the stage: Palermo's key art, the shared bar and its line, under the VGraphics intro. */
+      #loader { position: fixed; left: 0; top: 0; width: 100%; height: 100vh; height: 100dvh; z-index: 10; box-sizing: border-box;
+                display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+                padding-bottom: max(10vh, 48px); background: #0A090D; transition: opacity 0.3s; }
+      #loader.done { opacity: 0; pointer-events: none; }
+      #loader-art { position: absolute; left: 0; top: 0; right: 0; bottom: 0; overflow: hidden; opacity: 0; transition: opacity 0.3s; }
+      #loader-art img { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; }
+      #loader-art::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 36%;
+                           background: linear-gradient(rgba(10, 9, 13, 0), rgba(10, 9, 13, 0.6)); }
+      #loader.with-art #loader-art { opacity: 1; }
+      /* A join link has no intro and no key art (Decision 1): the logo over the bar. */
+      html.no-intro #loader-art { display: none; }
+      #loader-logo { display: none; position: relative; width: min(72vw, 420px, 50vh); height: auto; margin: auto 0 min(5vh, 36px); }
+      html.no-intro #loader-logo { display: block; }
+      /* The shared bar in Palermo's gold (the start's colour) on the dark track the house's dark loaders use. */
+      #loader-bar { position: relative; --vg-bar-track: #1F1F22; --vg-bar-lip: #34343A; --vg-bar-groove: #0B0B0C;
+                    --vg-bar-shade: rgba(0,0,0,.5); --vg-bar-shadow: rgba(0,0,0,.45); }
+      #loader-status { position: relative; margin: min(3.4vh, 22px) 0 0; font-size: min(4.2vh, 18px); color: #F3EADA;
+                       text-shadow: 0 1px 2px rgba(10, 9, 13, 0.7), 0 0 12px rgba(10, 9, 13, 0.45); }
+      /* The legal line, while the build loads, on the pages that show the build alone (the TV and join pages, and the
+         preview): Unity's first screen draws its own, so it fades out once Unity says so (html.started), over the key
+         art that may still be up, never snapped away. On /play/ and /demo/ the site's slim bar has it. */
+      #legal { display: none; position: fixed; left: 0; right: 0; bottom: max(12px, env(safe-area-inset-bottom)); z-index: 20;
+               margin: 0; text-align: center; font-size: 12px; color: rgba(243, 234, 218, 0.6); }
+      html.route-tv #legal, html.route-join #legal, html:not(.framed) #legal { display: block; }
+      html.started #legal { opacity: 0; visibility: hidden; transition: opacity 0.2s ease-in, visibility 0s linear 0.2s; }
+      /* A phone on its side: the game is played upright (7.2). Never while the player types (html.editing), when an
+         in-app browser's keyboard can make a small phone's frame landscape. */
+      #upright { display: none; position: fixed; left: 0; top: 0; right: 0; bottom: 0; z-index: 40; align-items: center;
+                 justify-content: center; background: #0A090D; font-size: 18px; text-align: center; }
+      @media (orientation: landscape) and (max-height: 499px) and (pointer: coarse) {
+        html:not(.editing) #upright { display: flex; }
+      }
+      /* The gesture zones (6.5): a see-through button over each Unity button that needs the browser's say-so (share,
+         copy, a link, Google, full screen), placed over the stage by the game, which does the work inside the tap.
+         Gone while the edit sheet is up. */
+      #zones { position: fixed; left: 0; top: 0; width: 100%; height: 100vh; height: 100dvh; z-index: 30; pointer-events: none; }
+      #zones button { position: absolute; margin: 0; padding: 0; border: 0; background: transparent; opacity: 0;
+                      pointer-events: auto; cursor: var(--cursor-link, pointer); }
+      html.editing #zones { display: none; }
+      /* The edit sheet (6.7): one text field above the keyboard, for touch screens, opened inside the tap on a Unity
+         field so a phone's keyboard comes up. It rises like the cards; the game lifts its card above the keyboard with
+         --edit-lift (the top window's visualViewport). Its field is the page's one place where text can be selected. */
+      #edit-sheet .card { margin-bottom: var(--edit-lift, 0px); }
+      #edit-label { display: block; margin: 0 0 8px; font-size: 14px; color: #B3AC9D; }
+      #edit-sheet input { display: block; width: 100%; height: 48px; box-sizing: border-box; margin: 0 0 14px; padding: 0 14px;
+                          border: 1px solid #2B3D57; border-radius: 12px; background: #101D2E; color: #F3EADA; font: inherit;
+                          font-size: 18px; outline: none; -webkit-user-select: text; user-select: text; cursor: var(--cursor-text, text); }
+      #edit-sheet input:focus { border-color: #E2B878; box-shadow: 0 0 0 3px rgba(226, 184, 120, 0.25); }
+      /* ?metrics (2.6): Unity's numbers in a corner, for phones and TVs, which have no developer tools. */
+      #metrics { position: fixed; top: max(8px, env(safe-area-inset-top)); right: 8px; z-index: 60; margin: 0; padding: 6px 8px;
+                 border-radius: 6px; background: rgba(10, 9, 13, 0.75); color: #F3EADA; pointer-events: none;
+                 font: 11px/1.35 ui-monospace, Menlo, Consolas, monospace; white-space: pre; }
+      /* The cards: something went wrong, or a browser too old for the game. Each rises from the foot and fades in, and
+         goes out the same way a little faster; under reduced motion a short fade only. */
+      .sheet { position: fixed; left: 0; top: 0; right: 0; bottom: 0; z-index: 50; box-sizing: border-box; padding: 16px;
+               display: flex; align-items: flex-end; justify-content: center; background: rgba(10, 9, 13, 0.6);
+               visibility: hidden; opacity: 0; transition: opacity 0.15s ease-in, visibility 0s linear 0.15s; }
+      .sheet.open { visibility: visible; opacity: 1; transition: opacity 0.25s cubic-bezier(0.23, 1, 0.32, 1), visibility 0s; }
+      .sheet .card { width: 100%; max-width: 420px; box-sizing: border-box; padding: 20px 20px 16px; border-radius: 16px;
+                     background: #16263B; border: 1px solid #2B3D57; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+                     transform: translateY(24px); transition: transform 0.15s ease-in; }
+      .sheet.open .card { transform: none; transition: transform 0.25s cubic-bezier(0.23, 1, 0.32, 1); }
+      .sheet h2 { margin: 0 0 6px; font-size: 18px; }
+      .sheet p { margin: 0 0 16px; font-size: 14px; line-height: 1.45; color: #B3AC9D; }
+      .sheet button { display: block; margin-left: auto; padding: 10px 20px; border: 0; border-radius: 999px; background: #E2B878;
+                      color: #0B1623; font: inherit; font-size: 15px; font-weight: 700; cursor: var(--cursor-link, pointer); }
+      .sheet button:focus-visible { outline: 3px solid #F3EADA; outline-offset: 2px; }
+      @media (prefers-reduced-motion: reduce) {
+        .sheet, .sheet.open { transition-duration: 0.1s; }
+        .sheet .card, .sheet.open .card { transform: none; transition: none; }
+        html.started #legal { transition: opacity 0.1s, visibility 0s linear 0.1s; }
+      }
+    </style>
+    <!-- The ad switch of every VGraphics web game, the site's /assets/web-ads.js, read before the game decides about ads.
+         No ids live in this page. -->
+    <script src="/assets/web-ads.js"></script>
+    <script>
+      // Palermo's entry in the switch (2.2, head item 7; 6.4): a party game shows no banner during play, only a short
+      // video between games on the TV, once Google has approved the in-game ads and the switch turns them on. Unity reads
+      // breaks once at start.
+      (function () {
+        var GAME = "palermo"; // this game's entry in the switch
+        var site = window.VGRAPHICS_WEB_ADS || {};
+        var entry = (site.games && site.games[GAME]) || {};
+        var publisher = typeof site.client === "string" && /^ca-pub-\d{16}$/.test(site.client);
+        var breaks = publisher && site.gameAds === true && entry.betweenGames === true;
+        window.palermoAds = { enabled: breaks, breaks: breaks };
+      })();
+    </script>
+    <script>
+      // The visit's analytics (2.2, head item 8; 6.2; 6.3): Google Analytics, GA4's web stream G-4TTYTB95TL, the visit's
+      // only one, since the site's frame pages load none. It loads once the consent mode is known: at once, denied, on
+      // the TV and the demo; on a phone once it has answered or is under 16, or when the app says
+      // (palermo-analytics-consent). Our own test visits load nothing (a page served from this PC, or a browser a script
+      // drives; George, 31 Oct 2026: "Yes, players first"), unless a development build asks with ?ga=debug. The address,
+      // referrer and title are the top window's, without their queries; errors go as "exception" events, the web's
+      // Crashlytics, without a room's code or a TV's key.
+      (function () {
+        var P = window.PalermoPage;
+        var ID = "G-4TTYTB95TL";
+        var allowed = P ? P.analytics(location, navigator, window.palermoDevelopment === true) : "off";
+        window.palermoAnalytics = { event: function () {}, error: function () {} };
+        if (allowed === "off") return;
+        var mode = null, waiting = [], errors = 0, sent = {};
+        window.dataLayer = window.dataLayer || [];
+        function gtag() { window.dataLayer.push(arguments); }
+        // What comes before the mode is known waits: the game's events, 50 at most, and the errors, which are 20 a visit
+        // at most anyway, beside them. A visit that ends first sends none of it.
+        function later(send, error) {
+          if (mode) send();
+          else if (error || waiting.length < 50) waiting.push(send);
+        }
+        function start(answer) {
+          mode = answer;
+          var page = P.pageInfo(window);
+          var config = { page_location: page.location, page_referrer: page.referrer, page_title: page.title };
+          if (allowed === "debug") config.debug_mode = true;
+          gtag("consent", "default", { analytics_storage: "denied", ad_storage: "denied", ad_user_data: "denied", ad_personalization: "denied" });
+          if (answer === "granted") gtag("consent", "update", { analytics_storage: "granted" });
+          gtag("js", new Date());
+          gtag("config", ID, config);
+          var tag = document.createElement("script");
+          tag.async = true;
+          tag.src = "https://www.googletagmanager.com/gtag/js?id=" + ID;
+          document.head.appendChild(tag);
+          var queued = waiting.splice(0);
+          for (var i = 0; i < queued.length; i++) queued[i]();
+        }
+        // At most 20 errors a visit, each once. Unity's loader hands the page's errorHandler every error the window
+        // hears, which these hooks hear too, so one error is one event (P.errorKey); an error first sent as an ordinary
+        // one goes once more if it turns out fatal.
+        function exception(text, fatal) {
+          var key = P.errorKey(text), was = Object.prototype.hasOwnProperty.call(sent, key) ? sent[key] : null;
+          if (errors >= 20 || was === "fatal" || (was && !fatal)) return;
+          errors++;
+          sent[key] = fatal ? "fatal" : "plain";
+          var description = P.cutKeys(text).replace(/\s+/g, " ").slice(0, 150);
+          later(function () { gtag("event", "exception", { description: description, fatal: fatal }); }, true);
+        }
+        window.addEventListener("error", function (event) {
+          var text = P.errorText((event && (event.error || event.message)) || "error");
+          exception(text, P.isFatal(text));
+        });
+        window.addEventListener("unhandledrejection", function (event) {
+          var text = P.errorText(event && event.reason);
+          exception(text, P.isFatal(text));
+        });
+        // What the game sends (its jslib, with the consent sheet), and the page's own fatal errors (palermo-page.js).
+        window.palermoAnalytics = {
+          event: function (name, params) {
+            if (typeof params === "string") {
+              try {
+                params = JSON.parse(params);
+              } catch (e) {
+                params = {};
+              }
+            }
+            later(function () { gtag("event", name, params || {}); });
+          },
+          error: function (message, stack, fatal) { exception(String(message), fatal === true); }
+        };
+        window.addEventListener("palermo-analytics-consent", function (event) {
+          var answer = event && event.detail === "granted" ? "granted" : "denied";
+          if (!mode) start(answer);
+          else if (answer !== mode) {
+            mode = answer;
+            gtag("consent", "update", { analytics_storage: answer });
+          }
+        });
+        var known = P.consentMode(P.route(location.search), P.stored("vg.party.age"), P.stored("vgraphics.consent"), new Date().getTime());
+        if (known) start(known);
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="stage"><canvas id="unity-canvas" tabindex="-1"></canvas></div>
+    <div id="loader">
+      <!-- Palermo's key art (web/public/game/art): the tall picture on a portrait screen, the wide one on a landscape
+           screen, each covering it. -->
+      <div id="loader-art"><picture>
+        <source media="(orientation: portrait)" type="image/webp" sizes="max(100vw, 55.8vh)" width="1080" height="1935"
+                srcset="TemplateData/art/key-tall.webp 1080w, TemplateData/art/key-tall-1440.webp 1440w">
+        <img src="TemplateData/art/key-wide.webp" srcset="TemplateData/art/key-wide.webp 1920w, TemplateData/art/key-wide-2560.webp 2560w"
+             sizes="max(100vw, 177.78vh)" width="1920" height="1080" alt="" fetchpriority="high" decoding="async">
+      </picture></div>
+      <img id="loader-logo" src="TemplateData/art/logo.webp" width="720" height="349" alt="Palermo Noir">
+      <div id="loader-bar" class="vg-bar"></div>
+      <p id="loader-status"></p>
+    </div>
+    <!-- The VGraphics intro over the loader, which keeps counting underneath: the site's one shared intro (the master,
+         3 Nov 2026, open question 17), never a copy of the build's own. It reads no-intro and no-film on html, and a TV
+         gets the 1080 film from its tag's data-film="1080" (2.1). The tag is written here from the route on html, so it
+         loads in its place, before the start, and reads its own tag as document.currentScript. -->
+    <script>document.write('<script src="/assets/startup/brand-intro.js"' + (document.documentElement.classList.contains("route-tv") ? ' data-film="1080"' : "") + '><\/script>');</script>
+    <p id="legal">&copy; 2026 VGraphics</p>
+    <div id="zones"></div>
+    <div id="edit-sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="edit-label">
+      <div class="card"><label id="edit-label" for="edit-input"></label><input id="edit-input" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done"><button type="button" id="edit-ok"></button></div>
+    </div>
+    <div id="upright"><p id="upright-text"></p></div>
+    <div id="problem" class="sheet" role="alertdialog" aria-labelledby="problem-title">
+      <div class="card"><h2 id="problem-title"></h2><p id="problem-text"></p><button type="button" id="problem-reload"></button></div>
+    </div>
+    <div id="too-old" class="sheet" role="alertdialog" aria-labelledby="too-old-title">
+      <div class="card"><h2 id="too-old-title"></h2><p id="too-old-text"></p></div>
+    </div>
+    <script src="/assets/startup/loading-bar.js"></script>
+    <script src="Build/PalermoNoir.loader.js?v=0.1.080029c0"></script>
+    <script>
+      // The start (2.2, body item 7). The TV's check before Unity (tv-check.js: its light profile and the fallback to
+      // the frozen page) comes with WP11 and WP13.
+      (function () {
+        var P = window.PalermoPage, ROUTE = P.route(location.search), profile = P.profile(ROUTE, window);
+        var canvas = document.querySelector("#unity-canvas"), loader = document.querySelector("#loader");
+        P.begin(ROUTE);
+        if (!P.modern(ROUTE)) { P.tooOld(); return; } // ES2020 and Web Audio; on a phone's routes VHub's class fields too
+        var FIRST = {"demo":[["StreamingAssets/media/art/logo.5ad8b1db.png"],["StreamingAssets/media/art/cards/baker@half.23a3f759.jpg"],["StreamingAssets/media/art/cards/officer@half.1ff3b8bc.jpg"],["StreamingAssets/media/art/cards/doctor@half.b071977e.jpg"],["StreamingAssets/media/art/cards/known-killer@half.fafab3b6.jpg"],["StreamingAssets/media/art/cards/hidden-killer@half.39472552.jpg"],["StreamingAssets/media/art/cards/inspector@half.2e45d975.jpg"],["StreamingAssets/media/art/cards/seer@half.171ea9f4.jpg"],["StreamingAssets/media/art/cards/mayor@half.f0cca16d.jpg"],["StreamingAssets/media/art/cards/hunter@half.df2974a6.jpg"],["StreamingAssets/media/art/cards/bulletproof@half.599fdcaa.jpg"],["StreamingAssets/media/art/cards/lawyer@half.67d1e407.jpg"],["StreamingAssets/media/art/cards/madman@half.3e03fe68.jpg"],["StreamingAssets/media/art/cards/henchman@half.acd937bb.jpg"],["StreamingAssets/media/art/cards/kamikaze@half.24a10bea.jpg"]],"join":[["StreamingAssets/media/art/logo.5ad8b1db.png"],["StreamingAssets/media/art/phone/key.c4eb0e4a.jpg"]],"play":[["StreamingAssets/media/art/logo.5ad8b1db.png"],["StreamingAssets/media/art/key-tall.75ae133a.jpg"],["StreamingAssets/media/art/phone/key.c4eb0e4a.jpg"]],"tv":[["StreamingAssets/media/art/logo.5ad8b1db.png"],["StreamingAssets/media/art/scenes/lobby.da278353.jpg","StreamingAssets/media/astc/scenes/lobby.15fb7c15.astc"],["StreamingAssets/media/art/cast/hunter.bab16c07.png"],["StreamingAssets/media/art/cast/kamikaze.e7fbc800.png"],["StreamingAssets/media/art/cast/lawyer.faabbfae.png"],["StreamingAssets/media/art/cast/madman.d45f6163.png"],["StreamingAssets/media/art/cast/mayor.886482f2.png"]]}; // the build writes {play:[[…]], join, tv, demo} here (WebGLOutput.FirstMediaJson)
+        P.prefetch(FIRST, ROUTE);
+        var bar = window.VGLoadingBar ? VGLoadingBar(document.querySelector("#loader-bar"),
+          { colour: "#E2B878", tip: "round", label: P.word("label"), onStep: P.showPercent, onFull: function () { loader.classList.add("starting"); } }) : P.stubBar();
+        P.watchArt(loader);
+        if (window.VGIntro && VGIntro.welcomeWindow) { bar.pace(Infinity, Infinity); VGIntro.welcomeWindow(bar.pace); }
+        P.relayFocus(ROUTE);
+        canvas.addEventListener("webglcontextlost", function () { P.fatal("webglcontextlost"); }, false); // Unity never restores it
+        createUnityInstance(canvas, {
+          dataUrl: "Build/PalermoNoir.data.unityweb", // every build file from the page's own folder
+          frameworkUrl: "Build/PalermoNoir.framework.js.unityweb",
+          codeUrl: "Build/PalermoNoir.wasm.unityweb",
+          streamingAssetsUrl: "StreamingAssets",
+          companyName: "VGraphics",
+          productName: "Palermo Noir",
+          productVersion: "palermo-web-1", // the cache's generation, not the app's version (2.4)
+          cacheControl: P.cacheControl,
+          devicePixelRatio: profile.dpr,
+          autoSyncPersistentDataPath: true,
+          errorHandler: function (m) { return P.pageError(m); } // never Unity's alert(); a fatal error ends the visit calmly
+        }, function (p) { P.progress(p); bar.show(Math.min(1, p / 0.9)); })
+          .then(function (unity) { P.started(unity, bar); })
+          .catch(function (m) { bar.stop(); P.failed(m); });
+      })();
+    </script>
+  </body>
+</html>
